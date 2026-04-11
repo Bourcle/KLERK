@@ -136,3 +136,12 @@ class LegalAgentService:
             self.checkpointer_cm = None
             self.checkpointer = None
             self.graph = None
+
+
+if __name__ == "__main__":
+    legal_service = LegalAgentService(Settings)  # 필요하면 Settings() 또는 get_settings()로 바꿔야 함
+    output_path = "./legal_service_graph.png"
+
+    legal_service.graph.get_graph().draw_mermaid_png(output_file_path=output_path)
+
+    print(f"saved: {output_path}")
