@@ -5,7 +5,15 @@ from pydantic import BaseModel, Field
 
 
 LegalSourceType = Literal["law", "precedent", "constitutional"]
-LegalTopic = Literal["civil", "criminal", "administrative", "general"]
+LegalTopic = Literal[
+    "constitution",
+    "civil",
+    "criminal",
+    "commercial",
+    "civil_procedure",
+    "criminal_procedure",
+    "general",
+]
 
 
 class RouteDecision(BaseModel):

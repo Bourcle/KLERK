@@ -1,6 +1,8 @@
 import json
+import os
 from typing import Any
 from urllib.parse import urljoin
+from pathlib import Path
 
 import httpx
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -76,7 +78,13 @@ class LLMFactory:
                 base_url=self.settings.local_embedding_base_url,
             )
         if provider == "huggingface_local":
-            return HuggingFaceEmbeddings(model_name=self.settings.local_embedding_model)
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+            model_name = _resolve_local_hf_snapshot(self.settings.local_embedding_model)
+            return HuggingFaceEmbeddings(
+                model_name=model_name,
+                model_kwargs={"local_files_only": True},
+            )
         if provider == "openai_compatible":
             return OpenAIEmbeddings(
                 model=self.settings.local_embedding_model,
@@ -153,6 +161,20 @@ def _raise_for_http_error(exc: httpx.HTTPStatusError, *, provider: str, base_url
         f"{provider} request failed with status {status}",
         user_message="모델 서버 요청이 실패했습니다. 서버 상태와 설정을 확인해 주세요.",
     ) from exc
+
+
+def _resolve_local_hf_snapshot(model_name: str) -> str:
+    cache_root = Path.home() / ".cache" / "huggingface" / "hub"
+    repo_dir = cache_root / f"models--{model_name.replace('/', '--')}"
+    snapshots_dir = repo_dir / "snapshots"
+    if not snapshots_dir.exists():
+        return model_name
+    candidates = sorted((path for path in snapshots_dir.iterdir() if path.is_dir()), reverse=True)
+    required_files = ("config.json", "modules.json", "tokenizer.json")
+    for snapshot in candidates:
+        if all((snapshot / name).exists() for name in required_files):
+            return str(snapshot)
+    return model_name
 
 
 async def ainvoke_text(model: Any, messages: list[dict[str, str]]) -> str:

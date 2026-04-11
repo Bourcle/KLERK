@@ -8,7 +8,9 @@ from service import LegalAgentService
 from utils.config import get_settings
 from utils.exceptions import AppError
 from utils.logging_utils import get_logger
+from dotenv import load_dotenv
 
+load_dotenv(override=True)
 
 SETTINGS = get_settings()
 SERVICE = LegalAgentService(SETTINGS)
@@ -98,12 +100,8 @@ def format_status(session_id: str, phase: str) -> str:
 
 
 def format_result_text(result) -> str:
-    return (
-        result.answer
-        + f"\n\n[route] {result.route.source_type}/{result.route.topic}"
-        + f"\n[collection] {result.route.collection}"
-        + f"\n[used_mcp] {str(result.used_mcp).lower()}"
-    )
+    retrieval_mode = "mcp_direct_fallback" if result.used_mcp else "vector_db"
+    return result.answer
 
 
 def format_user_error(exc: Exception) -> str:

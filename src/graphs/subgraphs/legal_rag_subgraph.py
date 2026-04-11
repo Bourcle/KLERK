@@ -64,8 +64,21 @@ def build_legal_rag_subgraph(*, model, settings: Settings, vector_store, mcp_gat
                 query=state["question"],
                 fetch_top_n=settings.mcp_fetch_top_n,
             )
-            vector_store.upsert_mcp_results(route=route, results=results)
-            docs = vector_store.search_with_fallback(query=state["question"], route=route)
+            docs = [
+                RetrievedChunk(
+                    content=result.content,
+                    similarity=0.0,
+                    source="mcp_direct_fallback",
+                    title=result.title,
+                    source_id=result.raw_id,
+                    collection=route.collection,
+                    metadata={
+                        **result.metadata,
+                        "fetched_via": "mcp_direct_fallback",
+                    },
+                )
+                for result in results
+            ]
             return {
                 "retrieved_docs": [doc.model_dump(mode="json") for doc in docs],
                 "used_mcp": True,

@@ -13,10 +13,13 @@
   - 사용자의 반복 관심사, 최근 법률 주제, ongoing issue를 보존
 - **법률 지식 캐시**: Chroma persistent collections
   - `korean_law`
-  - `korean_civil_law`
-  - `korean_criminal_law`
+  - `law_constitution`
+  - `law_civil`
+  - `law_criminal`
+  - `law_commercial`
+  - `law_civil_procedure`
+  - `law_criminal_procedure`
   - `korean_precedent`
-  - `korean_constitutional`
 
 ### 2) 그래프 구조
 - **Main Graph**
@@ -39,8 +42,8 @@
 2. 관련 long-term memory를 붙인다.
 3. 적절한 collection에서 Chroma 검색을 수행한다.
 4. 충분하지 않으면 Korean Law MCP를 호출한다.
-5. 가져온 상세 텍스트를 chunking 해서 Chroma에 저장한다.
-6. 캐시된 문서와 memory를 함께 사용해 답변을 생성한다.
+5. 가져온 상세 텍스트를 직접 근거 문서로 사용한다.
+6. 검색 문서와 memory를 함께 사용해 답변을 생성한다.
 
 ---
 
@@ -157,7 +160,7 @@ uv run python src/app.py
 2. 생성된 답변을 **한 글자씩** 채팅창에 `yield`
 
 즉, 토큰 레벨 streaming transport 가 아니더라도 사용자 체감상 스트리밍처럼 보이도록 구현했다.
-또한 Gradio 버전에 따라 `gr.Chatbot(type="messages")` 지원 여부를 런타임에서 확인해, 미지원 버전에서는 legacy history 포맷으로 자동 fallback 한다.
+채팅 히스토리는 Gradio messages 포맷으로 일관되게 유지한다.
 
 ---
 

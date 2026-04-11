@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from legal_memory_agent.memory_store import MemoryRepository
-from legal_memory_agent.schemas import RouteDecision
+from storages.memory_store import MemoryRepository
+from data_structure.schemas import RouteDecision
 
 
 def test_memory_record_and_search(tmp_path: Path):
@@ -9,7 +9,7 @@ def test_memory_record_and_search(tmp_path: Path):
     repo.record_turn(
         user_id="u1",
         question="민법상 손해배상 책임이 성립하는 요건은?",
-        route=RouteDecision(source_type="law", topic="civil", collection="korean_civil_law"),
+        route=RouteDecision(source_type="law", topic="civil", collection="law_civil"),
         answer="불법행위 요건과 손해 발생, 인과관계가 중요하다.",
     )
 

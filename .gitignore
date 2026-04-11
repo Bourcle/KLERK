@@ -16,4 +16,5 @@ wheels/
 docs/
 .DS_Store
 *.txt
-/src/.data
+.vscode
+*/.data
