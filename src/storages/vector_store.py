@@ -1,0 +1,99 @@
+from pathlib import Path
+from typing import Iterable
+
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
+
+from utils.config import Settings
+from utils.exceptions import VectorStoreError
+from parsers import stable_id
+from data_structure.schemas import MCPFetchResult, RetrievedChunk, RouteDecision
+
+
+def distance_to_similarity(distance: float | None) -> float:
+    if distance is None:
+        return 0.0
+    return 1.0 / (1.0 + max(float(distance), 0.0))
+
+
+def open_vector_db(*, embeddings, persist_dir: Path | str, collection: str) -> Chroma:
+    """Initialize and return a Chroma vector database instance."""
+    return Chroma(
+        collection_name=collection,
+        persist_directory=str(persist_dir),
+        embedding_function=embeddings,
+    )
+
+
+class LegalVectorStore:
+    def __init__(self, persist_dir: Path, embeddings, settings: Settings):
+        self.persist_dir = Path(persist_dir)
+        self.embeddings = embeddings
+        self.settings = settings
+        self._stores: dict[str, Chroma] = {}
+        self.persist_dir.mkdir(parents=True, exist_ok=True)
+
+    def get_store(self, collection_name: str) -> Chroma:
+        if collection_name not in self._stores:
+            self._stores[collection_name] = open_vector_db(
+                embeddings=self.embeddings,
+                persist_dir=self.persist_dir,
+                collection=collection_name,
+            )
+        return self._stores[collection_name]
+
+    def search(self, *, query: str, collection_name: str, k: int | None = None) -> list[RetrievedChunk]:
+        k = k or self.settings.vector_top_k
+        try:
+            store = self.get_store(collection_name)
+            results = store.similarity_search_with_score(query, k=k)
+            return [
+                RetrievedChunk(
+                    content=doc.page_content,
+                    similarity=distance_to_similarity(score),
+                    source="vector_db",
+                    title=(doc.metadata or {}).get("title"),
+                    source_id=(doc.metadata or {}).get("source_id"),
+                    collection=collection_name,
+                    metadata=doc.metadata or {},
+                )
+                for doc, score in results
+            ]
+        except Exception as exc:  # noqa: BLE001
+            raise VectorStoreError(str(exc)) from exc
+
+    def search_with_fallback(self, *, query: str, route: RouteDecision) -> list[RetrievedChunk]:
+        docs = self.search(query=query, collection_name=route.collection)
+        if docs:
+            return docs
+        if route.collection != self.settings.default_collection:
+            return self.search(query=query, collection_name=self.settings.default_collection)
+        return docs
+
+    def upsert_mcp_results(self, *, route: RouteDecision, results: Iterable[MCPFetchResult]) -> int:
+        docs: list[Document] = []
+        ids: list[str] = []
+        for result in results:
+            doc_id = stable_id(route.collection, result.source_type, result.raw_id, result.content[:120])
+            ids.append(doc_id)
+            docs.append(
+                Document(
+                    page_content=result.content,
+                    metadata={
+                        "title": result.title,
+                        "source_id": result.raw_id,
+                        "source_type": result.source_type,
+                        "collection": route.collection,
+                        **result.metadata,
+                    },
+                )
+            )
+        if not docs:
+            return 0
+        store = self.get_store(route.collection)
+        try:
+            store.delete(ids=ids)
+        except Exception:
+            pass
+        store.add_documents(documents=docs, ids=ids)
+        return len(docs)
