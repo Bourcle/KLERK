@@ -89,18 +89,30 @@ def serialize_chat(chat: list[dict[str, str]]) -> list[dict[str, str]]:
     ]
 
 
-def format_status(session_id: str, phase: str) -> str:
-    return (
+def format_status(session_id: str, phase: str, result=None) -> str:
+    base = (
         f"session_id: {session_id}\n"
         f"phase: {phase}\n"
         f"provider: {SETTINGS.local_llm_provider}\n"
         f"model: {SETTINGS.local_llm_model}\n"
         f"embedding: {SETTINGS.local_embedding_model}"
     )
+    if result is not None:
+        harness_info = (
+            f"\n---\n"
+            f"route: {result.route.source_type}/{result.route.topic}\n"
+            f"collection: {result.route.collection}\n"
+            f"rewritten_query: {result.rewritten_query[:80] if result.rewritten_query else 'N/A'}\n"
+            f"docs: {len(result.retrieved_docs)}\n"
+            f"iterations: {result.retrieval_iterations}\n"
+            f"fallback: {', '.join(result.fallback_history) if result.fallback_history else 'none'}\n"
+            f"mcp: {'yes' if result.used_mcp else 'no'}"
+        )
+        base += harness_info
+    return base
 
 
 def format_result_text(result) -> str:
-    retrieval_mode = "mcp_direct_fallback" if result.used_mcp else "vector_db"
     return result.answer
 
 
@@ -114,12 +126,13 @@ async def stream_text(
     chat: list[dict[str, str]],
     text: str,
     session_id: str,
+    result=None,
 ) -> AsyncGenerator[tuple[str, list[dict[str, str]], str, str], None]:
     partial = ""
     for ch in text:
         partial += ch
         chat[-1]["content"] = partial
-        yield session_id, serialize_chat(chat), format_status(session_id, "streaming"), ""
+        yield session_id, serialize_chat(chat), format_status(session_id, "streaming", result), ""
         await asyncio.sleep(SETTINGS.char_stream_delay)
 
 
@@ -141,6 +154,7 @@ async def ui_send(
     chat.append({"role": "assistant", "content": ""})
     yield session_id, serialize_chat(chat), format_status(session_id, "running"), ""
 
+    result = None
     try:
         result = await SERVICE.aask(question=user_text, user_id=user_id, thread_id=session_id)
         answer_text = format_result_text(result)
@@ -156,7 +170,7 @@ async def ui_send(
         )
         answer_text = format_user_error(exc)
 
-    async for payload in stream_text(chat, answer_text, session_id):
+    async for payload in stream_text(chat, answer_text, session_id, result):
         yield payload
 
 
@@ -186,7 +200,7 @@ def build_app() -> gr.Blocks:
         gr.HTML(
             '<div class="klerk-header">'
             "<h1>KLERK</h1>"
-            "<p>한국 법률 질의응답 | LangGraph Memory | Chroma Retrieval | MCP Fallback</p>"
+            "<p>Korean Law Engine for Retrieval and Knowledge | Retrieval Harness 기반 법률 QA</p>"
             "</div>"
         )
 

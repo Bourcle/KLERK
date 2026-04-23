@@ -19,6 +19,9 @@ class AgentState(TypedDict, total=False):
     used_mcp: bool
     answer: str
     error: str | None
+    rewritten_query: str
+    retrieval_iterations: int
+    fallback_history: list[str]
 
 
 class MemoryState(TypedDict, total=False):
@@ -36,3 +39,6 @@ class LegalRAGState(TypedDict, total=False):
     retrieval_sufficient: bool
     used_mcp: bool
     answer: str
+    rewritten_query: str
+    iteration: int
+    fallback_history: list[str]

@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     similarity_threshold: float = Field(default=0.40, alias="SIMILARITY_THRESHOLD")
     min_retrieved_docs: int = Field(default=2, alias="MIN_RETRIEVED_DOCS")
     max_context_chars: int = Field(default=5000, alias="MAX_CONTEXT_CHARS")
+    max_retrieval_iterations: int = Field(default=3, alias="MAX_RETRIEVAL_ITERATIONS")
+    rerank_top_k: int = Field(default=4, alias="RERANK_TOP_K")
 
     memory_half_life_days: int = Field(default=30, alias="MEMORY_HALF_LIFE_DAYS")
     memory_default_importance: float = Field(default=0.55, alias="MEMORY_DEFAULT_IMPORTANCE")

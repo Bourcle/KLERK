@@ -196,6 +196,76 @@ def heuristic_route(question: str, settings: Settings) -> RouteDecision:
     )
 
 
+async def rewrite_query_for_retrieval(question: str, route: RouteDecision, model) -> str:
+    from llm_model.llm import ainvoke_json
+
+    payload = await ainvoke_json(
+        model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a Korean legal search query optimizer. "
+                    "Rewrite the user question into a concise, keyword-rich Korean search query "
+                    "optimized for vector similarity search in a Korean legal database.\n"
+                    "Rules:\n"
+                    "- Expand abbreviations (민소→민사소송법, 형소→형사소송법, 헌재→헌법재판소, etc.)\n"
+                    "- Include full legal term names alongside common terms\n"
+                    "- Keep article numbers (제N조) if mentioned\n"
+                    "- Add relevant legal concepts related to the question\n"
+                    "- Remove conversational filler; keep only substantive terms\n"
+                    "- Output must be in Korean\n"
+                    'Reply only in JSON: {"rewritten_query": "..."}'
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Question: {question}\n"
+                    f"Domain: {route.source_type}, Topic: {route.topic}"
+                ),
+            },
+        ],
+        default={"rewritten_query": question},
+    )
+    return str(payload.get("rewritten_query", question)).strip() or question
+
+
+async def refine_query_for_retry(question: str, current_query: str, route: RouteDecision, doc_summaries: str, model) -> str:
+    from llm_model.llm import ainvoke_json
+
+    payload = await ainvoke_json(
+        model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a Korean legal search query optimizer. "
+                    "The previous search query returned insufficient results. "
+                    "Generate a refined search query using different terms, broader or narrower scope, "
+                    "or alternative legal concepts.\n"
+                    "- Try synonyms, related legal terms, or different perspectives\n"
+                    "- If the question is about a specific article, try searching for the parent law\n"
+                    "- If too specific, broaden; if too broad, narrow down\n"
+                    "- Output must be in Korean\n"
+                    'Reply only in JSON: {"refined_query": "..."}'
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Original question: {question}\n"
+                    f"Previous query: {current_query}\n"
+                    f"Domain: {route.source_type}, Topic: {route.topic}\n"
+                    f"Current results preview:\n{doc_summaries}"
+                ),
+            },
+        ],
+        default={"refined_query": question},
+    )
+    return str(payload.get("refined_query", question)).strip() or question
+
+
 async def route_question(question: str, model, settings: Settings) -> RouteDecision:
     from llm_model.llm import ainvoke_json
 

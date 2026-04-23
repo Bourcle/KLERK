@@ -58,6 +58,7 @@ class MCPFetchResult(BaseModel):
 class SufficiencyDecision(BaseModel):
     sufficient: bool = False
     reason: str = ""
+    suggested_action: str = ""
 
 
 class AnswerResult(BaseModel):
@@ -67,3 +68,6 @@ class AnswerResult(BaseModel):
     retrieved_docs: list[RetrievedChunk] = Field(default_factory=list)
     used_mcp: bool = False
     trace_id: str
+    rewritten_query: str = ""
+    retrieval_iterations: int = 0
+    fallback_history: list[str] = Field(default_factory=list)

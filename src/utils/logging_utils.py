@@ -30,6 +30,19 @@ class JsonFormatter(logging.Formatter):
             "base_url",
             "embedding_provider",
             "embedding_model",
+            "rewritten_query",
+            "retrieval_count",
+            "top_score",
+            "rerank_scores",
+            "sufficiency_decision",
+            "sufficiency_reason",
+            "fallback_action",
+            "fallback_iteration",
+            "mcp_called",
+            "mcp_upserted",
+            "selected_collection",
+            "source_type",
+            "topic",
         ]:
             value = getattr(record, key, None)
             if value is not None:

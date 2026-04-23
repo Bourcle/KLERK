@@ -49,11 +49,30 @@ def build_main_graph(*, model, settings, checkpointer, memory_subgraph, legal_ra
             },
             config=config,
         )
+        rewritten_query = result.get("rewritten_query", "")
+        iterations = result.get("iteration", 0)
+        fallback_history = result.get("fallback_history", [])
+
+        logger.info(
+            "legal RAG subgraph completed",
+            extra={
+                "trace_id": state.get("trace_id"),
+                "event": "rag_completed",
+                "rewritten_query": rewritten_query,
+                "retrieval_count": len(result.get("retrieved_docs", [])),
+                "sufficiency_decision": result.get("retrieval_sufficient", False),
+                "fallback_iteration": iterations,
+                "mcp_called": result.get("used_mcp", False),
+            },
+        )
         return {
             "retrieved_docs": result.get("retrieved_docs", []),
             "retrieval_sufficient": result.get("retrieval_sufficient", False),
             "used_mcp": result.get("used_mcp", False),
             "answer": result.get("answer", ""),
+            "rewritten_query": rewritten_query,
+            "retrieval_iterations": iterations,
+            "fallback_history": fallback_history,
         }
 
     async def persist_turn_memory(state: AgentState):

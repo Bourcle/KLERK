@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
+from chromadb import logger
 from dotenv import load_dotenv
 
 try:
@@ -448,6 +449,24 @@ def parse_law_chunks(
     return chunks
 
 
+def build_summary(chunk: LawChunk, path_text: str | None) -> str:
+    parts = [chunk.law_name]
+    if chunk.article_no:
+        parts.append(chunk.article_no)
+    if chunk.article_title:
+        parts.append(f"({chunk.article_title})")
+    summary_line = " ".join(parts)
+
+    provenance_parts = [f"문서유형: 법령"]
+    if chunk.article_no:
+        provenance_parts.append(f"조문번호: {chunk.article_no}")
+    if path_text:
+        provenance_parts.append(f"위치: {path_text}")
+    provenance_line = " | ".join(provenance_parts)
+
+    return f"{summary_line}\n{provenance_line}"
+
+
 def make_document(chunk: LawChunk) -> tuple[Document, str]:
     path_text = hierarchical_path(chunk.part, chunk.chapter, chunk.section, chunk.subsection)
 
@@ -460,6 +479,8 @@ def make_document(chunk: LawChunk) -> tuple[Document, str]:
     else:
         source_message = f"다음 조항은 **{chunk.law_name}**에서 발췌한 내용입니다."
 
+    summary_text = build_summary(chunk, path_text)
+
     metadata = {
         "law_name": chunk.law_name,
         "source": chunk.source,
@@ -471,9 +492,16 @@ def make_document(chunk: LawChunk) -> tuple[Document, str]:
         "section": chunk.section,
         "subsection": chunk.subsection,
         "hierarchy": path_text,
+        "doc_type": "statute",
+        "summary": summary_text,
+        "source_type": "law",
     }
 
-    content = f"<출처>\n{source_message}\n</출처>\n\n<법률조항>\n{chunk.text}\n</법률조항>"
+    content = (
+        f"<요약>\n{summary_text}\n</요약>\n\n"
+        f"<출처>\n{source_message}\n</출처>\n\n"
+        f"<법률조항>\n{chunk.text}\n</법률조항>"
+    )
 
     stable_key = "|".join(
         [
@@ -493,13 +521,33 @@ def batched(iterable: list, batch_size: int) -> Iterator[list]:
         yield iterable[idx : idx + batch_size]
 
 
-def get_embeddings(model_name: str = "BAAI/bge-m3") -> HuggingFaceEmbeddings:
+def get_embeddings(
+    model_name: str = "BAAI/bge-m3",
+    device: str = os.getenv("EMB_DEVICE", "cpu"),  # "cuda", "cuda:0", "mps", "cpu"
+    batch_size: int = 32,
+    multi_process: bool = False,
+) -> HuggingFaceEmbeddings:
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     resolved_model_name = resolve_local_hf_snapshot(model_name)
+
+    model_kwargs = {"local_files_only": True}
+    if device:
+        model_kwargs["device"] = device
+
+    print(f"Using device: {device} ; Using batch size: {batch_size} ; Using multi_process: {multi_process}", flush=True)
+
     return HuggingFaceEmbeddings(
         model_name=resolved_model_name,
-        model_kwargs={"local_files_only": True},
+        model_kwargs=model_kwargs,
+        encode_kwargs={
+            "batch_size": batch_size,
+            "normalize_embeddings": True,
+            # 필요하면 아래도 실험 가능
+            # "precision": "float32",   # 또는 "int8"
+        },
+        multi_process=multi_process,
+        show_progress=True,
     )
 
 
@@ -531,7 +579,7 @@ def build_collections_from_single_pdf(
     persist_dir: str | Path,
     embeddings: HuggingFaceEmbeddings,
     *,
-    batch_size: int = 64,
+    batch_size: int = 8,
     include_appendix: bool = True,
     dump_split_text: bool = False,
 ) -> list[dict]:
@@ -606,7 +654,7 @@ def build_all(
     pdf_path: str | Path,
     persist_dir: str | Path,
     embedding_model: str = "BAAI/bge-m3",
-    batch_size: int = 64,
+    batch_size: int = 8,
     include_appendix: bool = True,
     reset: bool = True,
     dump_split_text: bool = False,
@@ -616,7 +664,9 @@ def build_all(
         shutil.rmtree(persist_dir)
     persist_dir.mkdir(parents=True, exist_ok=True)
 
-    embeddings = get_embeddings(model_name=embedding_model)
+    embeddings = get_embeddings(
+        model_name=embedding_model, device=os.getenv("EMB_DEVICE", "cpu"), batch_size=batch_size, multi_process=True
+    )
     reports = build_collections_from_single_pdf(
         pdf_path=pdf_path,
         persist_dir=persist_dir,
@@ -693,7 +743,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--glob", default="*.pdf", help="--pdf-dir 사용 시 PDF 검색 glob 패턴")
     parser.add_argument("--persist-dir", default="./chroma_yukbeop", help="Chroma 저장 디렉토리")
     parser.add_argument("--embedding-model", default="BAAI/bge-m3", help="Hugging Face embedding model")
-    parser.add_argument("--batch-size", type=int, default=64, help="Chroma add_documents 배치 크기")
+    parser.add_argument("--batch-size", type=int, default=8, help="Chroma add_documents 배치 크기")
     parser.add_argument("--exclude-appendix", action="store_true", help="부칙 청크를 인덱싱하지 않음")
     parser.add_argument("--keep-existing", action="store_true", help="기존 persist 디렉토리를 삭제하지 않음")
     parser.add_argument("--dump-split-text", action="store_true", help="법별 분리 결과를 txt로 저장")

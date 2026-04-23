@@ -123,6 +123,9 @@ class LegalAgentService:
             retrieved_docs=[RetrievedChunk.model_validate(item) for item in state.get("retrieved_docs", [])],
             used_mcp=bool(state.get("used_mcp", False)),
             trace_id=trace_id,
+            rewritten_query=state.get("rewritten_query", ""),
+            retrieval_iterations=state.get("retrieval_iterations", 0),
+            fallback_history=state.get("fallback_history", []),
         )
 
     async def aclose(self) -> None:
