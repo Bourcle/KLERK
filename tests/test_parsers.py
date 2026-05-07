@@ -1,4 +1,4 @@
-from legal_memory_agent.parsers import (
+from parsers import (
     chunk_text,
     parse_constitutional_ids,
     parse_law_ids,

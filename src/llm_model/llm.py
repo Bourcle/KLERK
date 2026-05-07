@@ -19,12 +19,33 @@ from utils.exceptions import (
 )
 
 
+def normalize_provider_name(provider: str) -> str:
+    """Normalize a provider name for consistent backend selection.
+
+    Args:
+        provider: Raw provider name from settings.
+
+    Returns:
+        str: Lowercase provider name with surrounding spaces removed and hyphens replaced by underscores.
+    """
+
+    return (provider or "").strip().lower().replace("-", "_")
+
+
 class LLMFactory:
+    """Factory for validating settings and creating LLM and embedding backends."""
+
     def __init__(self, settings: Settings):
         self.settings = settings
 
     def validate_settings(self) -> None:
-        provider = self.settings.local_llm_provider.lower()
+        """Validate required LLM backend settings before model creation.
+
+        Raises:
+            ConfigError: If required model, base URL, or API key settings are missing.
+        """
+
+        provider = normalize_provider_name(self.settings.local_llm_provider)
         model = self.settings.local_llm_model.strip()
         if not model:
             raise ConfigError(
@@ -38,21 +59,30 @@ class LLMFactory:
                     "LOCAL_LLM_BASE_URL is empty for ollama",
                     user_message="Ollama 서버 주소가 비어 있습니다. .env의 LOCAL_LLM_BASE_URL 값을 확인해 주세요.",
                 )
-        if provider == "openai_compatible":
+        if provider in {"openai_compatible", "vllm"}:
             base_url = self.settings.local_llm_base_url.strip()
             if not base_url:
                 raise ConfigError(
-                    "LOCAL_LLM_BASE_URL is empty for openai_compatible",
+                    "LOCAL_LLM_BASE_URL is empty for OpenAI-compatible backend",
                     user_message="OpenAI 호환 서버 주소가 비어 있습니다. .env의 LOCAL_LLM_BASE_URL 값을 확인해 주세요.",
                 )
-            if not (self.settings.local_llm_api_key or "").strip():
+            if provider == "openai_compatible" and not (self.settings.local_llm_api_key or "").strip():
                 raise ConfigError(
                     "LOCAL_LLM_API_KEY is empty for openai_compatible",
                     user_message="OpenAI 호환 API 키가 비어 있습니다. .env의 LOCAL_LLM_API_KEY 값을 확인해 주세요.",
                 )
 
     def create_chat_model(self):
-        provider = self.settings.local_llm_provider.lower()
+        """Create a chat model instance from the configured local LLM provider.
+
+        Returns:
+            ChatOllama | ChatOpenAI: Chat model instance configured from runtime settings.
+
+        Raises:
+            ConfigError: If the configured LLM provider is not supported.
+        """
+
+        provider = normalize_provider_name(self.settings.local_llm_provider)
         if provider == "ollama":
             return ChatOllama(
                 model=self.settings.local_llm_model,
@@ -60,7 +90,7 @@ class LLMFactory:
                 temperature=self.settings.local_llm_temperature,
                 num_predict=self.settings.local_llm_max_tokens,
             )
-        if provider == "openai_compatible":
+        if provider in {"openai_compatible", "vllm"}:
             return ChatOpenAI(
                 model=self.settings.local_llm_model,
                 base_url=self.settings.local_llm_base_url,
@@ -71,16 +101,25 @@ class LLMFactory:
         raise ConfigError(f"Unsupported LLM provider: {self.settings.local_llm_provider}")
 
     def create_embeddings(self):
-        provider = self.settings.local_embedding_provider.lower()
+        """Create an embedding model instance from the configured embedding provider.
+
+        Returns:
+            OllamaEmbeddings | HuggingFaceEmbeddings | OpenAIEmbeddings: Embedding backend instance.
+
+        Raises:
+            ConfigError: If the configured embedding provider is not supported.
+        """
+
+        provider = normalize_provider_name(self.settings.local_embedding_provider)
         if provider == "ollama":
             return OllamaEmbeddings(
                 model=self.settings.local_embedding_model,
                 base_url=self.settings.local_embedding_base_url,
             )
-        if provider == "huggingface_local":
+        if provider in {"huggingface_local", "local"}:
             os.environ.setdefault("HF_HUB_OFFLINE", "1")
             os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-            model_name = _resolve_local_hf_snapshot(self.settings.local_embedding_model)
+            model_name = resolve_local_hf_snapshot(self.settings.local_embedding_model)
             return HuggingFaceEmbeddings(
                 model_name=model_name,
                 model_kwargs={"local_files_only": True},
@@ -94,11 +133,28 @@ class LLMFactory:
         raise ConfigError(f"Unsupported embedding provider: {self.settings.local_embedding_provider}")
 
     async def acheck_chat_backend(self) -> None:
-        provider = self.settings.local_llm_provider.lower()
-        if provider == "ollama":
-            await self._acheck_ollama_backend()
+        """Run an asynchronous health check for the configured chat backend.
 
-    async def _acheck_ollama_backend(self) -> None:
+        Returns:
+            None: This method completes silently when the backend check succeeds.
+        """
+
+        provider = normalize_provider_name(self.settings.local_llm_provider)
+        if provider == "ollama":
+            await self.acheck_ollama_backend()
+
+    async def acheck_ollama_backend(self) -> None:
+        """Check whether the configured Ollama server and model are available.
+
+        Returns:
+            None: This method completes silently when Ollama and the target model are available.
+
+        Raises:
+            ConfigError: If the Ollama base URL is invalid.
+            LLMConnectionError: If the Ollama server cannot be reached or returns an invalid response.
+            LLMModelNotFoundError: If the configured Ollama model is not installed.
+        """
+
         base_url = self.settings.local_llm_base_url.rstrip("/")
         model_name = self.settings.local_llm_model
         timeout = httpx.Timeout(5.0, connect=3.0)
@@ -143,7 +199,21 @@ class LLMFactory:
             )
 
 
-def _raise_for_http_error(exc: httpx.HTTPStatusError, *, provider: str, base_url: str, model_name: str) -> None:
+def raise_for_http_error(exc: httpx.HTTPStatusError, *, provider: str, base_url: str, model_name: str) -> None:
+    """Convert an HTTP status error into a domain-specific LLM exception.
+
+    Args:
+        exc: HTTP status error raised during model server communication.
+        provider: Name of the model provider or client class.
+        base_url: Base URL of the model server.
+        model_name: Requested model name.
+
+    Raises:
+        LLMAuthenticationError: If authentication or authorization fails.
+        LLMModelNotFoundError: If the requested model is not found.
+        LLMError: If the model server request fails for another HTTP status.
+    """
+
     status = exc.response.status_code
     if status in {401, 403}:
         raise LLMAuthenticationError(
@@ -163,7 +233,16 @@ def _raise_for_http_error(exc: httpx.HTTPStatusError, *, provider: str, base_url
     ) from exc
 
 
-def _resolve_local_hf_snapshot(model_name: str) -> str:
+def resolve_local_hf_snapshot(model_name: str) -> str:
+    """Resolve a locally cached Hugging Face snapshot path when available.
+
+    Args:
+        model_name: Hugging Face model name or local model path.
+
+    Returns:
+        str: Local snapshot path when a valid cached snapshot exists; otherwise the original model name.
+    """
+
     cache_root = Path.home() / ".cache" / "huggingface" / "hub"
     repo_dir = cache_root / f"models--{model_name.replace('/', '--')}"
     snapshots_dir = repo_dir / "snapshots"
@@ -178,6 +257,22 @@ def _resolve_local_hf_snapshot(model_name: str) -> str:
 
 
 async def ainvoke_text(model: Any, messages: list[dict[str, str]]) -> str:
+    """Invoke a chat model asynchronously and return its response as plain text.
+
+    Args:
+        model: Chat model object exposing an asynchronous ainvoke method.
+        messages: Chat messages to send to the model.
+
+    Returns:
+        str: Model response content converted to text.
+
+    Raises:
+        LLMConnectionError: If the model server cannot be reached.
+        LLMAuthenticationError: If model server authentication fails.
+        LLMModelNotFoundError: If the requested model is not found.
+        LLMError: If model invocation fails for another reason.
+    """
+
     try:
         response = await model.ainvoke(messages)
         content = getattr(response, "content", response)
@@ -197,13 +292,13 @@ async def ainvoke_text(model: Any, messages: list[dict[str, str]]) -> str:
             ),
         ) from exc
     except httpx.HTTPStatusError as exc:
-        _raise_for_http_error(
+        raise_for_http_error(
             exc,
             provider=model.__class__.__name__,
             base_url=str(getattr(model, "base_url", "unknown")),
             model_name=str(getattr(model, "model", "unknown")),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise LLMError(
             str(exc),
             user_message="질문 처리 중 모델 호출에 실패했습니다. 서버 설정과 로그를 확인해 주세요.",
@@ -215,6 +310,17 @@ async def ainvoke_json(
     messages: list[dict[str, str]],
     default: dict[str, Any],
 ) -> dict[str, Any]:
+    """Invoke a chat model asynchronously and parse the response as JSON.
+
+    Args:
+        model: Chat model object exposing an asynchronous ainvoke method.
+        messages: Chat messages to send to the model.
+        default: Fallback dictionary returned when JSON parsing fails.
+
+    Returns:
+        dict[str, Any]: Parsed JSON response, or the provided default value when parsing fails.
+    """
+
     raw = await ainvoke_text(model, messages)
     try:
         start = raw.find("{")

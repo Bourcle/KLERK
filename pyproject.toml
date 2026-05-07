@@ -5,6 +5,7 @@ description = "LangGraph-based Korean legal RAG agent with memory, MCP fallback,
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "bert-score>=0.3.13",
   "chromadb>=1.0.0",
   "gradio>=5.0.0",
   "langchain>=1.0.0",
@@ -43,5 +44,5 @@ packages = ["src/legal_memory_agent"]
 package = true
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 asyncio_mode = "auto"

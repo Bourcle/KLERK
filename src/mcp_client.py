@@ -16,6 +16,15 @@ from data_structure.schemas import MCPFetchResult, RouteDecision
 
 
 def tool_output_to_text(result: Any) -> str:
+    """Convert MCP tool output into plain text.
+
+    Args:
+        result: Raw MCP tool result object or dictionary.
+
+    Returns:
+        str: Extracted tool output text.
+    """
+
     if hasattr(result, "content"):
         content = result.content
         if isinstance(content, list):
@@ -30,6 +39,8 @@ def tool_output_to_text(result: Any) -> str:
 
 
 class KoreanLawMCPGateway:
+    """Gateway for searching and fetching Korean legal evidence through MCP tools."""
+
     SERVER_NAME = "korean_law"
 
     def __init__(self, settings: Settings):
@@ -46,9 +57,29 @@ class KoreanLawMCPGateway:
         )
 
     def is_enabled(self) -> bool:
+        """Check whether Korean law MCP fallback is enabled.
+
+        Returns:
+            bool: True when the law API credential is configured.
+        """
+
         return bool(self.settings.law_api_oc)
 
-    async def _call_tool(self, tools: dict[str, Any], tool_name: str, arguments: dict[str, Any]) -> str:
+    async def call_tool(self, tools: dict[str, Any], tool_name: str, arguments: dict[str, Any]) -> str:
+        """Call an MCP tool and return its text output.
+
+        Args:
+            tools: Available MCP tools indexed by tool name.
+            tool_name: Name of the MCP tool to invoke.
+            arguments: Arguments passed to the MCP tool.
+
+        Returns:
+            str: Text output returned by the MCP tool.
+
+        Raises:
+            MCPError: If the tool is missing, returns an error-like response, or invocation fails.
+        """
+
         tool = tools.get(tool_name)
         if tool is None:
             raise MCPError(f"Tool not found: {tool_name}")
@@ -64,6 +95,21 @@ class KoreanLawMCPGateway:
             raise MCPError(f"{tool_name} failed: {exc}") from exc
 
     async def search_and_fetch(self, *, route: RouteDecision, query: str, fetch_top_n: int = 3) -> list[MCPFetchResult]:
+        """Search Korean legal MCP tools and fetch detailed evidence chunks.
+
+        Args:
+            route: Route decision used to choose law, precedent, or constitutional MCP tools.
+            query: Search query sent to the MCP search tool.
+            fetch_top_n: Maximum number of search results to fetch in detail.
+
+        Returns:
+            list[MCPFetchResult]: Fetched MCP evidence chunks with source metadata.
+
+        Raises:
+            ConfigError: If MCP fallback is disabled by missing API credentials.
+            MCPError: If MCP tool invocation fails.
+        """
+
         if not self.is_enabled():
             raise ConfigError("LAW_API_OC is not set. MCP fallback is disabled.")
 
@@ -83,7 +129,7 @@ class KoreanLawMCPGateway:
         async with self.client.session(self.SERVER_NAME) as session:
             tools = {tool.name: tool for tool in await load_mcp_tools(session)}
 
-            search_text = await self._call_tool(
+            search_text = await self.call_tool(
                 tools,
                 search_name,
                 {"query": query, "page": 1, "display": fetch_top_n},
@@ -106,7 +152,7 @@ class KoreanLawMCPGateway:
 
             collected: list[MCPFetchResult] = []
             for idx, raw_id in enumerate(raw_ids):
-                detail_text = await self._call_tool(tools, detail_name, self._detail_args(detail_name, raw_id))
+                detail_text = await self.call_tool(tools, detail_name, self.detail_args(detail_name, raw_id))
                 title = titles[idx] if idx < len(titles) else query
                 for chunk_idx, chunk in enumerate(chunk_text(detail_text)):
                     collected.append(
@@ -126,7 +172,21 @@ class KoreanLawMCPGateway:
             return collected
 
     @staticmethod
-    def _detail_args(tool_name: str, raw_id: str) -> dict[str, str]:
+    @staticmethod
+    def detail_args(tool_name: str, raw_id: str) -> dict[str, str]:
+        """Build detail-tool arguments for a Korean legal MCP result ID.
+
+        Args:
+            tool_name: MCP detail tool name.
+            raw_id: Raw result ID extracted from MCP search output.
+
+        Returns:
+            dict[str, str]: Argument dictionary expected by the selected MCP detail tool.
+
+        Raises:
+            ValueError: If the detail tool name is not supported.
+        """
+
         if tool_name == "get_law_detail":
             return {"lawId": raw_id}
         if tool_name == "get_precedent_detail":

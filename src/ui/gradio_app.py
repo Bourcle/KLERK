@@ -49,18 +49,45 @@ CUSTOM_CSS = """
 
 
 def ensure_session_id(session_id: str | None) -> str:
+    """Return an existing session ID or create a new one.
+
+    Args:
+        session_id: Existing session ID, or None when a new session should be created.
+
+    Returns:
+        str: Existing or newly generated session ID.
+    """
+
     return session_id or uuid.uuid4().hex
 
 
 def ensure_user_id(user_id: str | None) -> str:
+    """Return an existing user ID or the default local user ID.
+
+    Args:
+        user_id: Existing user ID, or None when the default user should be used.
+
+    Returns:
+        str: Existing user ID or default local user ID.
+    """
+
     return user_id or "local-user"
 
 
 def normalize_chat(chat) -> list[dict[str, str]]:
-    if not chat:
-        return []
+    """Normalize Gradio chat history into role-content message dictionaries.
 
-    normalized: list[dict[str, str]] = []
+    Args:
+        chat: Raw chat history from Gradio or compatible message objects.
+
+    Returns:
+        list[dict[str, str]]: Normalized chat messages containing only user and assistant roles.
+    """
+
+    if not chat:
+        return list()
+
+    normalized: list[dict[str, str]] = list()
     for item in chat:
         if isinstance(item, dict):
             role = item.get("role")
@@ -82,6 +109,15 @@ def normalize_chat(chat) -> list[dict[str, str]]:
 
 
 def serialize_chat(chat: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Serialize chat messages into Gradio-compatible role-content dictionaries.
+
+    Args:
+        chat: Normalized chat messages.
+
+    Returns:
+        list[dict[str, str]]: Serialized chat messages containing valid user and assistant roles.
+    """
+
     return [
         {"role": item["role"], "content": str(item.get("content", ""))}
         for item in chat
@@ -90,6 +126,17 @@ def serialize_chat(chat: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 def format_status(session_id: str, phase: str, result=None) -> str:
+    """Format the current session, model, and retrieval harness status text.
+
+    Args:
+        session_id: Current chat session ID.
+        phase: Current UI or pipeline phase.
+        result: Optional service result containing route, retrieval, fallback, and MCP metadata.
+
+    Returns:
+        str: Human-readable status text for the Gradio sidebar.
+    """
+
     base = (
         f"session_id: {session_id}\n"
         f"phase: {phase}\n"
@@ -113,10 +160,28 @@ def format_status(session_id: str, phase: str, result=None) -> str:
 
 
 def format_result_text(result) -> str:
+    """Extract answer text from a service result.
+
+    Args:
+        result: Service result object containing the generated answer.
+
+    Returns:
+        str: Generated answer text.
+    """
+
     return result.answer
 
 
 def format_user_error(exc: Exception) -> str:
+    """Convert an exception into a user-facing error message.
+
+    Args:
+        exc: Exception raised during chat processing.
+
+    Returns:
+        str: User-facing error message.
+    """
+
     if isinstance(exc, AppError):
         return exc.user_message
     return "질문 처리 중 알 수 없는 오류가 발생했습니다. 서버 로그를 확인해 주세요."
@@ -128,6 +193,18 @@ async def stream_text(
     session_id: str,
     result=None,
 ) -> AsyncGenerator[tuple[str, list[dict[str, str]], str, str], None]:
+    """Stream answer text character by character into the chat state.
+
+    Args:
+        chat: Current normalized chat messages.
+        text: Full answer text to stream.
+        session_id: Current chat session ID.
+        result: Optional service result used to format pipeline status.
+
+    Yields:
+        tuple[str, list[dict[str, str]], str, str]: Updated session ID, chat messages, status text, and input box value.
+    """
+
     partial = ""
     for ch in text:
         partial += ch
@@ -141,6 +218,17 @@ async def ui_send(
     chat: list[dict[str, str]] | None,
     user_text: str,
 ):
+    """Handle a user chat submission and stream the generated answer to the UI.
+
+    Args:
+        session_id: Current session ID, or None when a new session ID should be created.
+        chat: Current chat history from the Gradio chatbot.
+        user_text: User-submitted question text.
+
+    Yields:
+        tuple[str, list[dict[str, str]], str, str]: Updated session ID, chat messages, status text, and input box value.
+    """
+
     user_text = (user_text or "").strip()
     chat = normalize_chat(chat)
     session_id = ensure_session_id(session_id)
@@ -175,16 +263,37 @@ async def ui_send(
 
 
 def ui_new_chat() -> tuple[str, list[dict[str, str]], str]:
+    """Create a new chat session with an empty message history.
+
+    Returns:
+        tuple[str, list[dict[str, str]], str]: New session ID, empty chat history, and status text.
+    """
+
     session_id = uuid.uuid4().hex
-    return session_id, [], format_status(session_id, "new_chat")
+    return session_id, list(), format_status(session_id, "new_chat")
 
 
 def ui_clear_chat(session_id: str | None) -> tuple[str, list[dict[str, str]], str, str]:
+    """Clear the current chat history while preserving or creating a session ID.
+
+    Args:
+        session_id: Current session ID, or None when a new session ID should be created.
+
+    Returns:
+        tuple[str, list[dict[str, str]], str, str]: Session ID, empty chat history, status text, and cleared input value.
+    """
+
     session_id = ensure_session_id(session_id)
-    return session_id, [], format_status(session_id, "cleared"), ""
+    return session_id, list(), format_status(session_id, "cleared"), ""
 
 
 def build_app() -> gr.Blocks:
+    """Build the Gradio UI for the KLERK chat application.
+
+    Returns:
+        gr.Blocks: Configured Gradio Blocks application.
+    """
+
     initial_session_id = uuid.uuid4().hex
 
     with gr.Blocks(
@@ -217,11 +326,11 @@ def build_app() -> gr.Blocks:
                     gr.Markdown(
                         "\n".join(
                             [
-                                f"- LLM Provider: `{SETTINGS.local_llm_provider}`",
-                                f"- LLM Model: `{SETTINGS.local_llm_model}`",
-                                f"- LLM Base URL: `{SETTINGS.local_llm_base_url}`",
-                                f"- Embedding Provider: `{SETTINGS.local_embedding_provider}`",
-                                f"- Embedding Model: `{SETTINGS.local_embedding_model}`",
+                                f"- LLM Provider: {SETTINGS.local_llm_provider}",
+                                f"- LLM Model: {SETTINGS.local_llm_model}",
+                                f"- LLM Base URL: {SETTINGS.local_llm_base_url}",
+                                f"- Embedding Provider: {SETTINGS.local_embedding_provider}",
+                                f"- Embedding Model: {SETTINGS.local_embedding_model}",
                             ]
                         )
                     )
@@ -257,7 +366,7 @@ def build_app() -> gr.Blocks:
         )
         btn_new.click(
             ui_new_chat,
-            inputs=[],
+            inputs=list(),
             outputs=[session_id, chatbot, pipeline_status],
         )
         btn_clear.click(
@@ -277,6 +386,12 @@ def build_app() -> gr.Blocks:
 
 
 def launch() -> None:
+    """Build and launch the Gradio application server.
+
+    Returns:
+        None: This function launches the app and blocks according to Gradio server behavior.
+    """
+
     LOGGER.info(
         "Launching Gradio app",
         extra={

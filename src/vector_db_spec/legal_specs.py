@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -14,6 +12,15 @@ class LawSpec:
 
 
 def normalize_legal_text(text: str) -> str:
+    """Normalize legal text for whitespace-insensitive string comparison.
+
+    Args:
+        text: Raw legal text to normalize.
+
+    Returns:
+        str: NFKC-normalized, whitespace-removed, lowercase text.
+    """
+
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", text or "")).strip().lower()
 
 
@@ -64,20 +71,45 @@ PROCEDURE_FIRST_COLLECTION_ORDER: tuple[str, ...] = (
     "law_criminal",
     "law_commercial",
 )
+PRECEDENT_COLLECTION_NAME = "korean_precedent"
 
 YUKBEOP_SPEC_BY_COLLECTION = {spec.collection_name: spec for spec in YUKBEOP_SPECS}
 YUKBEOP_SPEC_BY_TOPIC = {spec.topic: spec for spec in YUKBEOP_SPECS}
 
 
 def ordered_yukbeop_specs() -> tuple[LawSpec, ...]:
+    """Return six-code law specs in procedure-first collection order.
+
+    Returns:
+        tuple[LawSpec, ...]: Ordered law specs following the configured collection priority.
+    """
+
     return tuple(YUKBEOP_SPEC_BY_COLLECTION[name] for name in PROCEDURE_FIRST_COLLECTION_ORDER)
 
 
 def collection_name_from_law_spec(spec: LawSpec) -> str:
+    """Return the collection name for a law specification.
+
+    Args:
+        spec: Law specification containing collection metadata.
+
+    Returns:
+        str: Collection name associated with the law specification.
+    """
+
     return spec.collection_name
 
 
 def find_law_spec(value: str) -> LawSpec | None:
+    """Find a law specification by exact law name, collection name, or alias.
+
+    Args:
+        value: Raw law name, collection name, or alias to match.
+
+    Returns:
+        LawSpec | None: Matching law specification, or None when no exact match is found.
+    """
+
     normalized = normalize_legal_text(value)
     for spec in ordered_yukbeop_specs():
         if normalized == normalize_legal_text(spec.law_name):
@@ -90,6 +122,15 @@ def find_law_spec(value: str) -> LawSpec | None:
 
 
 def match_law_spec_from_text(text: str) -> LawSpec | None:
+    """Find the best law specification mentioned inside free-form text.
+
+    Args:
+        text: Raw text that may contain a law name, collection name, or alias.
+
+    Returns:
+        LawSpec | None: Best matching law specification, or None when no match is found.
+    """
+
     normalized = normalize_legal_text(text)
     matches: list[tuple[int, int, LawSpec]] = []
     for priority, spec in enumerate(ordered_yukbeop_specs()):

@@ -7,7 +7,6 @@ from vector_db_spec.legal_specs import (
     match_law_spec_from_text,
 )
 
-
 CONSTITUTION_KEYWORDS = {
     "헌법",
     "대한민국헌법",
@@ -108,11 +107,29 @@ TOPIC_KEYWORD_RULES = (
 
 
 def normalize_topic(topic: str | None) -> str:
+    """Normalize a topic name and resolve known aliases.
+
+    Args:
+        topic: Raw topic name from user input, model output, or route metadata.
+
+    Returns:
+        str: Normalized topic name, or "general" when no alias is matched.
+    """
+
     normalized = (topic or "").strip().lower()
     return TOPIC_ALIASES.get(normalized, "general")
 
 
 def collection_name_from_topic(topic: str) -> str | None:
+    """Resolve a vector collection name from a legal topic.
+
+    Args:
+        topic: Legal topic name to resolve.
+
+    Returns:
+        str | None: Matching collection name, or None when the topic has no mapped law spec.
+    """
+
     spec = YUKBEOP_SPEC_BY_TOPIC.get(normalize_topic(topic))
     if spec is None:
         return None
@@ -120,10 +137,28 @@ def collection_name_from_topic(topic: str) -> str | None:
 
 
 def resolve_law_spec_from_query(question: str):
+    """Resolve a law specification directly mentioned in the question.
+
+    Args:
+        question: User question that may contain a law name, collection name, or alias.
+
+    Returns:
+        LawSpec | None: Matching law specification, or None when no law is detected.
+    """
+
     return match_law_spec_from_text(question)
 
 
 def infer_topic_from_query(question: str) -> str:
+    """Infer the legal topic from law aliases, keywords, and token rules.
+
+    Args:
+        question: User question to classify into a legal topic.
+
+    Returns:
+        str: Inferred topic name, or "general" when no specific topic is detected.
+    """
+
     spec = resolve_law_spec_from_query(question)
     if spec is not None:
         return spec.topic
@@ -132,10 +167,23 @@ def infer_topic_from_query(question: str) -> str:
     for topic, keywords in TOPIC_KEYWORD_RULES:
         if keywords & tokens:
             return topic
+        if any(keyword in question for keyword in keywords):
+            return topic
     return "general"
 
 
 def select_collection(topic: str, source_type: str, settings: Settings) -> str:
+    """Select the vector collection for a topic and legal source type.
+
+    Args:
+        topic: Legal topic used for collection routing.
+        source_type: Legal source type such as law, precedent, or constitutional.
+        settings: Runtime settings containing default and topic-collection options.
+
+    Returns:
+        str: Selected vector collection name.
+    """
+
     if source_type == "precedent":
         return "korean_precedent"
 
@@ -151,6 +199,16 @@ def select_collection(topic: str, source_type: str, settings: Settings) -> str:
 
 
 def heuristic_route(question: str, settings: Settings) -> RouteDecision:
+    """Create a deterministic route decision from legal patterns and keyword rules.
+
+    Args:
+        question: User question to route.
+        settings: Runtime settings used for collection selection.
+
+    Returns:
+        RouteDecision: Heuristic route containing source type, topic, collection, and reason.
+    """
+
     inferred_topic = infer_topic_from_query(question)
     inferred_source_type = "constitutional" if inferred_topic == "constitution" else "law"
     tokens = tokenize_koreanish(question)
@@ -197,6 +255,17 @@ def heuristic_route(question: str, settings: Settings) -> RouteDecision:
 
 
 async def rewrite_query_for_retrieval(question: str, route: RouteDecision, model) -> str:
+    """Rewrite a legal question into a retrieval-optimized Korean search query.
+
+    Args:
+        question: Original user question.
+        route: Route decision containing source type and topic context.
+        model: LLM client or runnable used for query rewriting.
+
+    Returns:
+        str: Rewritten retrieval query, or the original question when rewriting fails.
+    """
+
     from llm_model.llm import ainvoke_json
 
     payload = await ainvoke_json(
@@ -220,10 +289,7 @@ async def rewrite_query_for_retrieval(question: str, route: RouteDecision, model
             },
             {
                 "role": "user",
-                "content": (
-                    f"Question: {question}\n"
-                    f"Domain: {route.source_type}, Topic: {route.topic}"
-                ),
+                "content": (f"Question: {question}\n" f"Domain: {route.source_type}, Topic: {route.topic}"),
             },
         ],
         default={"rewritten_query": question},
@@ -231,7 +297,22 @@ async def rewrite_query_for_retrieval(question: str, route: RouteDecision, model
     return str(payload.get("rewritten_query", question)).strip() or question
 
 
-async def refine_query_for_retry(question: str, current_query: str, route: RouteDecision, doc_summaries: str, model) -> str:
+async def refine_query_for_retry(
+    question: str, current_query: str, route: RouteDecision, doc_summaries: str, model
+) -> str:
+    """Refine a failed retrieval query for the next retry attempt.
+
+    Args:
+        question: Original user question.
+        current_query: Previous retrieval query that produced insufficient results.
+        route: Route decision containing source type and topic context.
+        doc_summaries: Preview of currently retrieved documents.
+        model: LLM client or runnable used for query refinement.
+
+    Returns:
+        str: Refined retrieval query, or the original question when refinement fails.
+    """
+
     from llm_model.llm import ainvoke_json
 
     payload = await ainvoke_json(
@@ -267,6 +348,17 @@ async def refine_query_for_retry(question: str, current_query: str, route: Route
 
 
 async def route_question(question: str, model, settings: Settings) -> RouteDecision:
+    """Route a Korean legal question using heuristic fallback and LLM classification.
+
+    Args:
+        question: User question to route.
+        model: LLM client or runnable used for route classification.
+        settings: Runtime settings used for fallback routing and collection selection.
+
+    Returns:
+        RouteDecision: Final route containing source type, topic, collection, and reason.
+    """
+
     from llm_model.llm import ainvoke_json
 
     fallback = heuristic_route(question, settings)

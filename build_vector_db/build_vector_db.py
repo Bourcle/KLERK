@@ -64,6 +64,7 @@ YUKBEOP_SPECS: tuple[LawSpec, ...] = (
     LawSpec("민사소송법", "law_civil_procedure", ("민사소송", "civil_procedure", "civil procedure")),
     LawSpec("형사소송법", "law_criminal_procedure", ("형사소송", "criminal_procedure", "criminal procedure")),
 )
+PRECEDENT_COLLECTION_NAME = "korean_precedent"
 
 
 LAW_CENTER_HEADER_RE = re.compile(r"법제처\s+\d+\s+국가법령정보센터")
@@ -81,31 +82,71 @@ ARTICLE_HEADER_RE = re.compile(r"^(제\s*\d+\s*조(?:\s*의\s*\d+)?)(?:\s*\(([^)
 
 
 def normalize_legal_text(text: str) -> str:
+    """Normalize legal text for whitespace-insensitive matching.
+
+    Args:
+        text: Raw legal text to normalize.
+
+    Returns:
+        str: NFKC-normalized, whitespace-removed, lowercase text.
+    """
+
     text = unicodedata.normalize("NFKC", text or "")
     text = re.sub(r"\s+", "", text)
     return text.strip().lower()
 
 
 def compact(text: str) -> str:
+    """Create a compact normalized representation of legal text.
+
+    Args:
+        text: Raw text to compact.
+
+    Returns:
+        str: Normalized text with whitespace removed.
+    """
+
     return normalize_legal_text(text)
 
 
 def collapse_spaces(text: str) -> str:
+    """Normalize text and collapse repeated whitespace into single spaces.
+
+    Args:
+        text: Raw text to normalize.
+
+    Returns:
+        str: NFKC-normalized text with repeated whitespace collapsed.
+    """
+
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text or "")).strip()
 
 
 def iter_pdf_pages(pdf_path: str | Path) -> Iterator[str]:
+    """Yield page text from a PDF file one page at a time.
+
+    Args:
+        pdf_path: Path to the source PDF file.
+
+    Yields:
+        str: Extracted text content for each PDF page.
+    """
+
     loader = PyPDFLoader(str(pdf_path))
     for page_doc in loader.lazy_load():
         yield page_doc.page_content or ""
 
 
 def detection_lines(page_text: str) -> list[str]:
-    """경계 감지용 전처리.
+    """Preprocess page text into lines used for law-boundary detection.
 
-    - 법제처 header, 페이지 번호, 책 제목 header 제거
-    - 법 제목 line은 남긴다
+    Args:
+        page_text: Raw text extracted from one PDF page.
+
+    Returns:
+        list[str]: Cleaned non-empty lines with repeated headers and page numbers removed.
     """
+
     lines: list[str] = []
     for raw in (page_text or "").splitlines():
         line = collapse_spaces(raw)
@@ -122,12 +163,16 @@ def detection_lines(page_text: str) -> list[str]:
 
 
 def clean_page_text(page_text: str, law_name: str | None = None) -> str:
-    """인덱싱용 전처리.
+    """Clean extracted page text for statute indexing.
 
-    - 법제처 header / 페이지 번호 제거
-    - 페이지 상단에 반복되는 법 제목 header 제거
-    - 책 제목 header 제거
+    Args:
+        page_text: Raw text extracted from one PDF page.
+        law_name: Optional law name used to remove repeated page-level law headers.
+
+    Returns:
+        str: Cleaned page text suitable for downstream chunking and indexing.
     """
+
     normalized_law = compact(law_name or "")
     cleaned: list[str] = []
 
@@ -155,6 +200,16 @@ def clean_page_text(page_text: str, law_name: str | None = None) -> str:
 
 
 def is_title_line(line: str, spec: LawSpec) -> bool:
+    """Check whether a line matches a law title or one of its aliases.
+
+    Args:
+        line: Candidate line from extracted PDF text.
+        spec: Law specification containing law name and aliases.
+
+    Returns:
+        bool: True when the line exactly matches the law title or alias after normalization.
+    """
+
     normalized_line = compact(line)
     candidates = {compact(spec.law_name), compact(f"「{spec.law_name}」")}
     for alias in spec.aliases:
@@ -164,6 +219,15 @@ def is_title_line(line: str, spec: LawSpec) -> bool:
 
 
 def start_cues_for_spec(spec: LawSpec) -> list[re.Pattern[str]]:
+    """Build law-start cue patterns for a specific law specification.
+
+    Args:
+        spec: Law specification used to select common or constitution-specific start cues.
+
+    Returns:
+        list[re.Pattern[str]]: Regular expression patterns indicating the beginning of a law block.
+    """
+
     common = [
         PROMULGATION_LINE_RE,
         re.compile(r"^제\s*1\s*편\b"),
@@ -195,12 +259,20 @@ def page_has_law_start_signature(
     current_page_window: int = 40,
     next_page_window: int = 15,
 ) -> bool:
-    """현재 페이지가 특정 법의 시작 페이지인지 판별한다.
+    """Determine whether a PDF page is the start page of a specific law.
 
-    조건:
-    1. 현재 페이지 상단 몇 줄 안에 법 제목 line이 있어야 함
-    2. 제목 뒤쪽 또는 다음 페이지 초반에 전문 / [시행] / 제1편 / 제1장 / 제1조 같은 시작 cue가 있어야 함
+    Args:
+        page_texts: Extracted text for all PDF pages.
+        page_idx: Zero-based page index to inspect.
+        spec: Law specification to detect.
+        top_title_window: Number of top lines searched for the law title.
+        current_page_window: Number of lines after the title searched for start cues.
+        next_page_window: Number of lines from the next page searched for start cues.
+
+    Returns:
+        bool: True when the page contains both a law title and a valid start cue.
     """
+
     current_lines = detection_lines(page_texts[page_idx])
     if not current_lines:
         return False
@@ -225,7 +297,18 @@ def page_has_law_start_signature(
 
 
 def detect_law_start_pages(page_texts: list[str]) -> dict[str, int]:
-    """단일 육법전서 PDF에서 각 법의 시작 physical page를 1-based로 반환한다."""
+    """Detect one-based start pages for each six-code law in a single PDF.
+
+    Args:
+        page_texts: Extracted text for all pages in the source PDF.
+
+    Returns:
+        dict[str, int]: Mapping from collection name to one-based physical start page.
+
+    Raises:
+        ValueError: If any law start page is missing or detected out of order.
+    """
+
     found: dict[str, int] = {}
 
     for page_idx in range(len(page_texts)):
@@ -249,7 +332,18 @@ def detect_law_start_pages(page_texts: list[str]) -> dict[str, int]:
 
 
 def split_single_pdf_by_patterns(pdf_path: str | Path) -> dict[str, dict]:
-    """단일 육법전서 PDF를 패턴만으로 6개 법 블록으로 분리한다."""
+    """Split a single six-code PDF into law-specific text blocks.
+
+    Args:
+        pdf_path: Path to the source six-code PDF.
+
+    Returns:
+        dict[str, dict]: Mapping from collection name to law metadata, page range, and extracted text.
+
+    Raises:
+        ValueError: If the PDF has no readable pages or law boundaries cannot be detected.
+    """
+
     pdf_path = Path(pdf_path)
     page_texts = list(iter_pdf_pages(pdf_path))
     if not page_texts:
@@ -290,6 +384,15 @@ def split_single_pdf_by_patterns(pdf_path: str | Path) -> dict[str, dict]:
 
 
 def extract_tokens(law_text: str) -> list[Token]:
+    """Extract structural statute tokens from law text.
+
+    Args:
+        law_text: Full text of one law block.
+
+    Returns:
+        list[Token]: Sorted structural tokens such as part, chapter, section, appendix, and article.
+    """
+
     patterns: tuple[tuple[str, re.Pattern[str]], ...] = (
         ("part", PART_RE),
         ("chapter", CHAPTER_RE),
@@ -310,6 +413,15 @@ def extract_tokens(law_text: str) -> list[Token]:
 
 
 def parse_article_header(header_line: str) -> tuple[str | None, str | None]:
+    """Parse an article number and title from an article header line.
+
+    Args:
+        header_line: Raw article header line.
+
+    Returns:
+        tuple[str | None, str | None]: Article number and article title, or None values when parsing fails.
+    """
+
     match = ARTICLE_HEADER_RE.match(collapse_spaces(header_line))
     if not match:
         return None, None
@@ -324,16 +436,32 @@ def hierarchical_path(
     section: str | None,
     subsection: str | None,
 ) -> str | None:
+    """Build a readable statute hierarchy path from structural headings.
+
+    Args:
+        part: Optional part heading.
+        chapter: Optional chapter heading.
+        section: Optional section heading.
+        subsection: Optional subsection heading.
+
+    Returns:
+        str | None: Joined hierarchy path, or None when no headings exist.
+    """
+
     items = [collapse_spaces(x) for x in (part, chapter, section, subsection) if x]
     return " > ".join(items) if items else None
 
 
 def extract_constitution_preamble(law_text: str) -> tuple[str | None, str]:
-    """헌법 전문을 별도 청크로 떼어낸다.
+    """Separate the Korean Constitution preamble from the article body.
 
-    헌법은 제1조 이전에 '전문'이 존재하므로, 조문 청킹만 하면 전문이 사라진다.
-    따라서 전문 block이 존재하면 별도 preamble 청크로 저장한다.
+    Args:
+        law_text: Full text of the Korean Constitution or another law.
+
+    Returns:
+        tuple[str | None, str]: Preamble text when detected and remaining law text.
     """
+
     if compact("대한민국헌법") not in compact(law_text):
         return None, law_text
 
@@ -354,6 +482,21 @@ def parse_law_chunks(
     source: str,
     include_appendix: bool = True,
 ) -> list[LawChunk]:
+    """Parse law text into article, appendix, and optional preamble chunks.
+
+    Args:
+        law_text: Full text of one law block.
+        law_name: Official law name associated with the text.
+        source: Source path or identifier for provenance metadata.
+        include_appendix: Whether to include appendix text as a separate chunk.
+
+    Returns:
+        list[LawChunk]: Parsed law chunks with hierarchy and article metadata.
+
+    Raises:
+        ValueError: If no structural tokens are found in the law text.
+    """
+
     chunks: list[LawChunk] = []
 
     if law_name == "대한민국헌법":
@@ -450,6 +593,16 @@ def parse_law_chunks(
 
 
 def build_summary(chunk: LawChunk, path_text: str | None) -> str:
+    """Build a compact summary string for a law chunk.
+
+    Args:
+        chunk: Parsed law chunk to summarize.
+        path_text: Optional hierarchy path for the chunk.
+
+    Returns:
+        str: Summary text containing law name, article metadata, and provenance fields.
+    """
+
     parts = [chunk.law_name]
     if chunk.article_no:
         parts.append(chunk.article_no)
@@ -468,6 +621,15 @@ def build_summary(chunk: LawChunk, path_text: str | None) -> str:
 
 
 def make_document(chunk: LawChunk) -> tuple[Document, str]:
+    """Convert a parsed law chunk into a LangChain document and stable document ID.
+
+    Args:
+        chunk: Parsed law chunk to convert.
+
+    Returns:
+        tuple[Document, str]: LangChain document with metadata and stable document ID.
+    """
+
     path_text = hierarchical_path(chunk.part, chunk.chapter, chunk.section, chunk.subsection)
 
     if chunk.chunk_type == "appendix":
@@ -517,16 +679,38 @@ def make_document(chunk: LawChunk) -> tuple[Document, str]:
 
 
 def batched(iterable: list, batch_size: int) -> Iterator[list]:
+    """Yield fixed-size batches from a list.
+
+    Args:
+        iterable: Source list to split into batches.
+        batch_size: Maximum number of items per batch.
+
+    Yields:
+        list: Consecutive batch slices from the source list.
+    """
+
     for idx in range(0, len(iterable), batch_size):
         yield iterable[idx : idx + batch_size]
 
 
 def get_embeddings(
     model_name: str = "BAAI/bge-m3",
-    device: str = os.getenv("EMB_DEVICE", "cpu"),  # "cuda", "cuda:0", "mps", "cpu"
+    device: str = os.getenv("EMB_DEVICE", "cpu"),
     batch_size: int = 32,
     multi_process: bool = False,
 ) -> HuggingFaceEmbeddings:
+    """Create a local Hugging Face embedding model for vector indexing.
+
+    Args:
+        model_name: Hugging Face model name or local cached model path.
+        device: Device used for embedding inference.
+        batch_size: Encoding batch size.
+        multi_process: Whether to enable multi-process embedding.
+
+    Returns:
+        HuggingFaceEmbeddings: Configured Hugging Face embedding backend.
+    """
+
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     resolved_model_name = resolve_local_hf_snapshot(model_name)
@@ -552,6 +736,15 @@ def get_embeddings(
 
 
 def resolve_local_hf_snapshot(model_name: str) -> str:
+    """Resolve a locally cached Hugging Face snapshot path when available.
+
+    Args:
+        model_name: Hugging Face model name or local model path.
+
+    Returns:
+        str: Valid local snapshot path when found, otherwise the original model name.
+    """
+
     cache_root = Path.home() / ".cache" / "huggingface" / "hub"
     repo_dir = cache_root / f"models--{model_name.replace('/', '--')}"
     snapshots_dir = repo_dir / "snapshots"
@@ -566,6 +759,15 @@ def resolve_local_hf_snapshot(model_name: str) -> str:
 
 
 def find_law_spec(law_name_or_collection: str) -> LawSpec | None:
+    """Find a law specification by law name, collection name, or alias.
+
+    Args:
+        law_name_or_collection: Law name, collection name, or alias to resolve.
+
+    Returns:
+        LawSpec | None: Matching law specification, or None when no match is found.
+    """
+
     target = compact(law_name_or_collection)
     for spec in YUKBEOP_SPECS:
         for candidate in (spec.law_name, spec.collection_name, *spec.aliases):
@@ -583,6 +785,20 @@ def build_collections_from_single_pdf(
     include_appendix: bool = True,
     dump_split_text: bool = False,
 ) -> list[dict]:
+    """Build Chroma collections for all six-code laws from a single PDF.
+
+    Args:
+        pdf_path: Path to the source six-code PDF.
+        persist_dir: Directory where Chroma collections and optional split text are stored.
+        embeddings: Embedding backend used by Chroma.
+        batch_size: Number of documents inserted per Chroma batch.
+        include_appendix: Whether to include appendix chunks.
+        dump_split_text: Whether to save split law text files for debugging.
+
+    Returns:
+        list[dict]: Build reports for each generated law collection.
+    """
+
     pdf_path = Path(pdf_path)
     persist_dir = Path(persist_dir)
 
@@ -659,6 +875,21 @@ def build_all(
     reset: bool = True,
     dump_split_text: bool = False,
 ) -> list[dict]:
+    """Build all six-code Chroma collections and write a build report.
+
+    Args:
+        pdf_path: Path to the source six-code PDF.
+        persist_dir: Directory where Chroma collections and reports are stored.
+        embedding_model: Hugging Face embedding model name or local path.
+        batch_size: Number of documents inserted per Chroma batch.
+        include_appendix: Whether to include appendix chunks.
+        reset: Whether to remove the existing persist directory before building.
+        dump_split_text: Whether to save split law text files for debugging.
+
+    Returns:
+        list[dict]: Build reports for all generated law collections.
+    """
+
     persist_dir = Path(persist_dir)
     if reset and persist_dir.exists():
         shutil.rmtree(persist_dir)
@@ -686,6 +917,20 @@ def open_collection(
     persist_dir: str | Path,
     embeddings: HuggingFaceEmbeddings | None = None,
 ) -> Chroma:
+    """Open a Chroma collection by law name, collection name, or alias.
+
+    Args:
+        law_name_or_collection: Law name, collection name, or alias to open.
+        persist_dir: Directory where Chroma collections are persisted.
+        embeddings: Optional embedding backend; created automatically when omitted.
+
+    Returns:
+        Chroma: Opened Chroma collection.
+
+    Raises:
+        ValueError: If the requested law or collection is not supported.
+    """
+
     embeddings = embeddings or get_embeddings()
     spec = find_law_spec(law_name_or_collection)
     if spec is None:
@@ -706,6 +951,19 @@ def search_collection(
     k: int = 4,
     embedding_model: str = "BAAI/bge-m3",
 ):
+    """Search a law-specific Chroma collection.
+
+    Args:
+        law_name_or_collection: Law name, collection name, or alias to search.
+        query: Search query text.
+        persist_dir: Directory where Chroma collections are persisted.
+        k: Number of documents to retrieve.
+        embedding_model: Hugging Face embedding model name or local path.
+
+    Returns:
+        list[Document]: Retrieved documents from the selected Chroma collection.
+    """
+
     store = open_collection(
         law_name_or_collection=law_name_or_collection,
         persist_dir=persist_dir,
@@ -714,7 +972,141 @@ def search_collection(
     return store.similarity_search(query, k=k)
 
 
+def make_precedent_document(item: dict) -> tuple[Document, str]:
+    """Convert a precedent JSON object into a LangChain document and stable document ID.
+
+    Args:
+        item: Precedent record containing case metadata, summary, holding, and reasoning.
+
+    Returns:
+        tuple[Document, str]: LangChain document with precedent metadata and stable document ID.
+    """
+
+    case_id = str(item.get("case_id") or item.get("case_number") or "").strip()
+    title = str(item.get("title") or case_id or "Untitled precedent").strip()
+    court = str(item.get("court") or "").strip()
+    decision_date = str(item.get("decision_date") or "").strip()
+    case_number = str(item.get("case_number") or "").strip()
+    summary = str(item.get("summary") or "").strip()
+    holding = str(item.get("holding") or "").strip()
+    reasoning = str(item.get("reasoning") or "").strip()
+    source_url = str(item.get("source_url") or "").strip()
+    tags = item.get("tags") or []
+
+    content = (
+        f"<요약>\n{title}\n문서유형: 판례 | 법원: {court or 'N/A'} | "
+        f"선고일: {decision_date or 'N/A'} | 사건번호: {case_number or 'N/A'}\n</요약>\n\n"
+        f"<판시사항>\n{holding or summary}\n</판시사항>\n\n"
+        f"<이유>\n{reasoning}\n</이유>\n\n"
+        f"<출처>\n{source_url or 'N/A'}\n</출처>"
+    )
+    metadata = {
+        "doc_type": "precedent",
+        "source_type": "precedent",
+        "case_id": case_id,
+        "title": title,
+        "court": court,
+        "decision_date": decision_date,
+        "case_number": case_number,
+        "source_url": source_url,
+        "tags": ",".join(tags) if isinstance(tags, list) else str(tags),
+        "collection": PRECEDENT_COLLECTION_NAME,
+    }
+    stable_key = "|".join(
+        [case_id, title, court, decision_date, case_number, hashlib.sha1(content.encode("utf-8")).hexdigest()]
+    )
+    return Document(page_content=content, metadata=metadata), hashlib.sha1(stable_key.encode("utf-8")).hexdigest()
+
+
+def build_precedent_collection_from_jsonl(
+    jsonl_path: str | Path,
+    persist_dir: str | Path,
+    embeddings: HuggingFaceEmbeddings,
+    *,
+    batch_size: int = 8,
+    reset_collection: bool = False,
+) -> dict:
+    """Build a Chroma precedent collection from a JSONL file.
+
+    Args:
+        jsonl_path: Path to the precedent JSONL file.
+        persist_dir: Directory where the Chroma collection and report are stored.
+        embeddings: Embedding backend used by Chroma.
+        batch_size: Number of precedent documents inserted per Chroma batch.
+        reset_collection: Whether to delete matching existing document IDs before insertion.
+
+    Returns:
+        dict: Build report containing collection name, source path, and document counts.
+
+    Raises:
+        FileNotFoundError: If the JSONL file does not exist.
+        ValueError: If the JSONL file is empty or required fields are missing.
+    """
+
+    path = Path(jsonl_path)
+    if not path.exists():
+        raise FileNotFoundError(f"판례 JSONL을 찾지 못했습니다: {path}")
+
+    documents: list[Document] = []
+    ids: list[str] = []
+    with path.open("r", encoding="utf-8") as file:
+        for line_no, line in enumerate(file, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            item = json.loads(line)
+            required = {"case_id", "title", "court", "decision_date", "case_number", "summary", "holding", "reasoning"}
+            missing = required - set(item)
+            if missing:
+                raise ValueError(f"{path}:{line_no} missing fields: {sorted(missing)}")
+            doc, doc_id = make_precedent_document(item)
+            documents.append(doc)
+            ids.append(doc_id)
+
+    if not documents:
+        raise ValueError(f"판례 JSONL이 비어 있습니다: {path}")
+
+    vector_store = Chroma(
+        collection_name=PRECEDENT_COLLECTION_NAME,
+        persist_directory=str(persist_dir),
+        embedding_function=embeddings,
+    )
+    if reset_collection:
+        try:
+            vector_store.delete(ids=ids)
+        except Exception:
+            pass
+    for doc_batch, id_batch in zip(batched(documents, batch_size), batched(ids, batch_size)):
+        vector_store.add_documents(documents=doc_batch, ids=id_batch)
+
+    report = {
+        "collection_name": PRECEDENT_COLLECTION_NAME,
+        "jsonl_path": str(path),
+        "num_chunks": len(documents),
+        "num_precedents": len(documents),
+    }
+    report_path = Path(persist_dir) / "precedent_build_report.json"
+    Path(persist_dir).mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
+
+
 def resolve_pdf_path(pdf_path: str | None, pdf_dir: str | None, glob_pattern: str) -> Path:
+    """Resolve the single source PDF path from an explicit path or directory glob.
+
+    Args:
+        pdf_path: Explicit PDF file path.
+        pdf_dir: Directory expected to contain exactly one matching PDF.
+        glob_pattern: Glob pattern used when resolving from pdf_dir.
+
+    Returns:
+        Path: Resolved PDF file path.
+
+    Raises:
+        FileNotFoundError: If no matching PDF is found.
+        ValueError: If neither source option is provided or multiple PDFs match.
+    """
+
     if pdf_path:
         path = Path(pdf_path)
         if not path.exists():
@@ -749,11 +1141,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dump-split-text", action="store_true", help="법별 분리 결과를 txt로 저장")
     parser.add_argument("--smoke-test-query", default=None, help="인덱싱 후 예시 질의")
     parser.add_argument("--smoke-test-law", default="민법", help="예시 질의를 던질 컬렉션/법 이름")
+    parser.add_argument("--precedent-jsonl", default=None, help="판례 JSONL 파일 경로")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.precedent_jsonl:
+        embeddings = get_embeddings(args.embedding_model)
+        report = build_precedent_collection_from_jsonl(
+            jsonl_path=args.precedent_jsonl,
+            persist_dir=args.persist_dir,
+            embeddings=embeddings,
+            batch_size=args.batch_size,
+            reset_collection=not args.keep_existing,
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+
     pdf_path = resolve_pdf_path(args.pdf_path, args.pdf_dir, args.glob)
 
     reports = build_all(

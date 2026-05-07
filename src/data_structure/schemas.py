@@ -5,6 +5,13 @@ from pydantic import BaseModel, Field
 
 
 LegalSourceType = Literal["law", "precedent", "constitutional"]
+RecoveryAction = Literal[
+    "refine_query",
+    "broaden_collection",
+    "mcp_augmentation",
+    "vector_research",
+    "merge_evidence",
+]
 LegalTopic = Literal[
     "constitution",
     "civil",
@@ -61,6 +68,18 @@ class SufficiencyDecision(BaseModel):
     suggested_action: str = ""
 
 
+class RecoveryStep(BaseModel):
+    iteration: int
+    reasoning: str
+    action: RecoveryAction
+    action_input: dict = Field(default_factory=dict)
+    observation: dict | str = Field(default_factory=dict)
+    evidence_delta: int = 0
+    next_query: str = ""
+    selected_collection: str = ""
+    source: str = "recovery"
+
+
 class AnswerResult(BaseModel):
     answer: str
     route: RouteDecision
@@ -71,3 +90,8 @@ class AnswerResult(BaseModel):
     rewritten_query: str = ""
     retrieval_iterations: int = 0
     fallback_history: list[str] = Field(default_factory=list)
+    recovery_steps: list[RecoveryStep] = Field(default_factory=list)
+    evidence_list: list[dict] = Field(default_factory=list)
+    citation_validation: dict = Field(default_factory=dict)
+    retrieval_sufficient: bool = False
+    sufficiency_reason: str = ""

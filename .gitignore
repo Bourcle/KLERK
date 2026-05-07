@@ -16,6 +16,7 @@ wheels/
 docs/
 .DS_Store
 *.txt
-.vscode
+.vscode/
 */.data
 .png
+.pytest_cache

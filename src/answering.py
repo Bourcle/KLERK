@@ -1,13 +1,34 @@
 from utils.config import Settings
 from llm_model.llm import ainvoke_text
 from data_structure.schemas import MemoryItem, RetrievedChunk, RouteDecision
+from utils.citations import evidence_label
 
 
 def truncate(text: str, limit: int) -> str:
+    """Truncate text to a maximum character limit with a truncation marker.
+
+    Args:
+        text: Source text to truncate.
+        limit: Maximum number of characters to keep before adding the truncation marker.
+
+    Returns:
+        str: Original text when within the limit, otherwise truncated text with a marker.
+    """
+
     return text if len(text) <= limit else text[:limit] + "\n...[truncated]"
 
 
 def group_docs_by_source(docs: list[RetrievedChunk], route: RouteDecision) -> str:
+    """Group retrieved legal documents into formatted evidence sections by source type.
+
+    Args:
+        docs: Retrieved evidence chunks to group and format.
+        route: Route decision used to infer the expected legal source type.
+
+    Returns:
+        str: Formatted evidence block grouped into statute, precedent, constitutional, and other sections.
+    """
+
     statute_docs = []
     precedent_docs = []
     constitutional_docs = []
@@ -34,7 +55,7 @@ def group_docs_by_source(docs: list[RetrievedChunk], route: RouteDecision) -> st
 
     if statute_docs:
         block = "\n\n".join(
-            f"[법령 {idx}] title={d.title or 'N/A'} source_id={d.source_id or 'N/A'} "
+            f"{evidence_label(d, idx)} [법령 {idx}] title={d.title or 'N/A'} source_id={d.source_id or 'N/A'} "
             f"similarity={d.similarity:.3f}\n{d.content}"
             for idx, d in enumerate(statute_docs, start=1)
         )
@@ -42,7 +63,7 @@ def group_docs_by_source(docs: list[RetrievedChunk], route: RouteDecision) -> st
 
     if precedent_docs:
         block = "\n\n".join(
-            f"[판례 {idx}] title={d.title or 'N/A'} source_id={d.source_id or 'N/A'} "
+            f"{evidence_label(d, idx)} [판례 {idx}] title={d.title or 'N/A'} source_id={d.source_id or 'N/A'} "
             f"similarity={d.similarity:.3f}\n{d.content}"
             for idx, d in enumerate(precedent_docs, start=1)
         )
@@ -50,7 +71,7 @@ def group_docs_by_source(docs: list[RetrievedChunk], route: RouteDecision) -> st
 
     if constitutional_docs:
         block = "\n\n".join(
-            f"[헌재 {idx}] title={d.title or 'N/A'} source_id={d.source_id or 'N/A'} "
+            f"{evidence_label(d, idx)} [헌재 {idx}] title={d.title or 'N/A'} source_id={d.source_id or 'N/A'} "
             f"similarity={d.similarity:.3f}\n{d.content}"
             for idx, d in enumerate(constitutional_docs, start=1)
         )
@@ -58,7 +79,7 @@ def group_docs_by_source(docs: list[RetrievedChunk], route: RouteDecision) -> st
 
     if other_docs:
         block = "\n\n".join(
-            f"[기타 {idx}] title={d.title or 'N/A'} source_id={d.source_id or 'N/A'} "
+            f"{evidence_label(d, idx)} [기타 {idx}] title={d.title or 'N/A'} source_id={d.source_id or 'N/A'} "
             f"similarity={d.similarity:.3f}\n{d.content}"
             for idx, d in enumerate(other_docs, start=1)
         )
@@ -77,6 +98,21 @@ async def generate_answer(
     docs: list[RetrievedChunk],
     evidence_sufficient: bool = True,
 ) -> str:
+    """Generate a Korean legal answer grounded in retrieved evidence and user memories.
+
+    Args:
+        model: LLM client or runnable used for answer generation.
+        settings: Runtime settings containing context length limits.
+        question: Original user question.
+        route: Route decision describing the legal source type, topic, and collection.
+        memories: Relevant user memories to include as auxiliary context.
+        docs: Retrieved legal evidence chunks to ground the answer.
+        evidence_sufficient: Whether the retrieved evidence was judged sufficient for answering.
+
+    Returns:
+        str: Generated Korean legal answer with evidence citations and legal-information disclaimer.
+    """
+
     memory_block = (
         "\n\n".join(
             f"- ({idx}) [{memory.domain}/{memory.topic}] {memory.content}"
@@ -118,7 +154,7 @@ async def generate_answer(
                 f"{sufficiency_note}\n\n"
                 "Requirements:\n"
                 "1. Core answer grounded in the provided evidence\n"
-                "2. Cite specific statutes, precedents, or constitutional decisions from the documents\n"
+                "2. Cite specific statutes, precedents, or constitutional decisions from the documents using evidence IDs like [E1] when applicable\n"
                 "3. Distinguish between 법령/판례/헌재결정 perspectives where applicable\n"
                 "4. State limitations if evidence is insufficient\n"
                 "5. Put this exact sentence on the last line: "

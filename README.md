@@ -136,23 +136,18 @@ Fallback 전략 (우선순위):
 | Fallback Loop | fallback_action, fallback_iteration |
 | MCP | mcp_called, mcp_upserted |
 
-## 결과 (Result)
+## 결과 / 평가 Artifact
 
-- 일반 법률 QA 50문항 기준 **BERT 0.63, BLEURT 0.32**
-- MCP-only 대비 약 **10~15% 개선**
-- 단일 검색 실패가 바로 답변 실패로 이어지지 않는 **더 안정적인 retrieval 흐름** 확보
+- 단일 검색 실패가 바로 답변 실패로 이어지지 않는 **더 안정적인 retrieval 흐름**을 코드로 구현했다.
+- BERT/BLEURT 같은 정량 수치는 `eval/outputs/evaluation_summary.json`과 `eval/outputs/evaluation_report.md`가 함께 있을 때만 이력서/포트폴리오에 사용한다.
+- `eval/datasets/legal_qa_50.sample.jsonl`은 schema smoke test용 sample이므로 이력서 수치로 사용하지 않는다.
+- 실제 수치는 동일 schema의 50문항 dataset으로 KLERK prediction, MCP-only baseline, report를 생성한 결과만 사용한다.
 
 ### 배운 점
 
 좋은 모델 하나보다 **retrieval control/harness engineering**이 더 중요하다.
 
-향후 주석서, 해설본, 공개 판결문 확장 시 **판결문 초안 작성 보조**까지 확장 가능하다.
-
-이 경험이 회사의 AI agent 개발과 evaluation pipeline 개선에도 이어져:
-- RACE 20% 상승
-- FACT 400% 상승
-- BERT 10% 상승
-- BLEURT 10% 상승
+향후 주석서, 해설본, 공개 판결문 확장 시 더 넓은 법률 업무 보조로 확장 가능하다.
 
 ---
 
@@ -265,18 +260,29 @@ MCP_SERVER_ENTRYPOINT=./external/korean-law-mcp/dist/index.js
 
 ### 3) 모델 준비
 
-Ollama 사용 시:
+기본 LLM backend는 local vLLM OpenAI-compatible endpoint다. 모델명은 코드에 고정하지 않고 `.env`에서 교체한다.
+
+vLLM 예시:
 ```bash
-ollama pull qwen3:8b
+vllm serve your-local-model --host 0.0.0.0 --port 8000
 ```
 
-임베딩 (로컬 Hugging Face):
+루트 `.env`:
 ```env
-LOCAL_EMBEDDING_PROVIDER=huggingface_local
-LOCAL_EMB_MODEL=BAAI/bge-m3
+LOCAL_LLM_PROVIDER=vllm
+LOCAL_LLM_BASE_URL=http://localhost:8000/v1
+LOCAL_LLM_MODEL=your-local-vllm-model
+LOCAL_LLM_API_KEY=dummy
+LOCAL_LLM_TEMPERATURE=0.1
 ```
 
-OpenAI 호환 endpoint:
+임베딩은 local bge-m3를 유지한다.
+```env
+LOCAL_EMBEDDING_PROVIDER=local
+LOCAL_EMBEDDING_MODEL=BAAI/bge-m3
+```
+
+Ollama 또는 일반 OpenAI-compatible endpoint도 provider 교체로 계속 사용할 수 있다.
 ```env
 LOCAL_LLM_PROVIDER=openai_compatible
 LOCAL_LLM_MODEL=gpt-4o-mini
@@ -289,6 +295,11 @@ LOCAL_LLM_API_KEY=...
 uv run python build_vector_db/build_vector_db.py --pdf-path ./data/yukbeop.pdf --persist-dir .data/chroma
 ```
 
+판례 sample collection build:
+```bash
+uv run python build_vector_db/build_vector_db.py --precedent-jsonl eval/datasets/sample_precedents.jsonl --persist-dir .data/chroma
+```
+
 ---
 
 ## 환경 변수
@@ -297,18 +308,18 @@ uv run python build_vector_db/build_vector_db.py --pdf-path ./data/yukbeop.pdf -
 |---|---|---|
 | `APP_ENV` | `dev` | 실행 환경 |
 | `LOG_LEVEL` | `INFO` | 로그 레벨 |
-| `LOCAL_LLM_PROVIDER` | `ollama` | LLM provider (ollama / openai_compatible) |
-| `LOCAL_LLM_MODEL` | `qwen3:8b` | LLM 모델명 |
-| `LOCAL_LLM_BASE_URL` | `http://localhost:11434` | LLM 서버 주소 |
-| `LOCAL_LLM_API_KEY` | - | OpenAI 호환 API 키 |
-| `LOCAL_EMBEDDING_PROVIDER` | `ollama` | Embedding provider |
-| `LOCAL_EMB_MODEL` | `BAAI/bge-m3` | Embedding 모델명 |
+| `LOCAL_LLM_PROVIDER` | `vllm` | LLM provider (vllm / ollama / openai_compatible) |
+| `LOCAL_LLM_MODEL` | `your-local-vllm-model` | LLM 모델명 |
+| `LOCAL_LLM_BASE_URL` | `http://localhost:8000/v1` | LLM 서버 주소 |
+| `LOCAL_LLM_API_KEY` | `dummy` | vLLM/OpenAI 호환 API 키 |
+| `LOCAL_EMBEDDING_PROVIDER` | `local` | Embedding provider |
+| `LOCAL_EMBEDDING_MODEL` | `BAAI/bge-m3` | Embedding 모델명 |
 | `DEFAULT_COLLECTION` | `korean_law` | 기본 검색 collection |
 | `USE_TOPIC_COLLECTIONS` | `true` | 주제별 collection 분리 사용 여부 |
 | `VECTOR_TOP_K` | `4` | 벡터 검색 상위 문서 수 |
 | `SIMILARITY_THRESHOLD` | `0.40` | 충분성 판단 최소 similarity |
 | `MIN_RETRIEVED_DOCS` | `2` | 충분성 판단 최소 문서 수 |
-| `MAX_RETRIEVAL_ITERATIONS` | `3` | ReAct fallback loop 최대 반복 |
+| `MAX_RETRIEVAL_ITERATIONS` | `3` | ReAct-style recovery loop 최대 반복 |
 | `RERANK_TOP_K` | `4` | Reranking 후 상위 유지 문서 수 |
 | `MCP_FETCH_TOP_N` | `3` | MCP 상세 조회 최대 건수 |
 | `MAX_CONTEXT_CHARS` | `5000` | 답변 생성 시 최대 context 길이 |
@@ -336,6 +347,46 @@ uv run pytest tests/ -v
 3. **Fallback loop 확인**: LOG_LEVEL=DEBUG 설정 후, 특이 질문으로 fallback 진입 여부 확인
 4. **MCP 통합 확인**: LAW_API_OC 설정 후, vector 검색 부족 시 MCP fallback 동작 확인
 5. **Structured logging 확인**: JSON 로그에서 `event` 필드별 harness 단계 추적
+
+### Evaluation 실행
+
+```bash
+PYTHONPATH=src:. python -m eval.run_klerk_eval --dataset eval/datasets/legal_qa_50.sample.jsonl --output eval/outputs/klerk_predictions.jsonl
+PYTHONPATH=src:. python -m eval.run_mcp_baseline --dataset eval/datasets/legal_qa_50.sample.jsonl --output eval/outputs/mcp_only_predictions.jsonl
+PYTHONPATH=src:. python -m eval.report \
+  --klerk eval/outputs/klerk_predictions.jsonl \
+  --baseline eval/outputs/mcp_only_predictions.jsonl \
+  --output-dir eval/outputs
+```
+
+BERTScore/BLEURT dependency 또는 BLEURT checkpoint가 없으면 report는 해당 metric을 unavailable로 기록한다. fake score는 생성하지 않는다.
+
+---
+
+## Portfolio Claim Alignment
+
+코드로 확인 가능한 표현:
+
+- LangGraph 기반 RAG harness
+- LLM+heuristic domain routing
+- Chroma domain collection selection
+- local bge-m3 embedding
+- local vLLM OpenAI-compatible LLM backend
+- query rewrite/refine, LLM reranking, sufficiency judge
+- ReAct-style recovery trace (`reasoning/action/observation/evidence_delta`)
+- Legal MCP augmentation
+- SQLite turn-summary memory
+- citation-aware evidence formatting
+- KLERK/MCP-only evaluation runner
+
+결과 artifact 없이 쓰면 안 되는 표현:
+
+- BERT/BLEURT n% improvement
+- Recall/entity extraction improvement
+- citation quality n% improvement
+- validation accuracy n% improvement
+- 판결문 자동 작성
+- LangSmith tracing, unless enabled and verified
 
 ---
 

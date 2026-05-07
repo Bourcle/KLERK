@@ -16,6 +16,8 @@ from storages.vector_store import LegalVectorStore
 
 
 class LegalAgentService:
+    """Service layer that wires LLM, memory, vector retrieval, MCP fallback, and the main agent graph."""
+
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
         configure_logging(self.settings.log_level)
@@ -29,7 +31,7 @@ class LegalAgentService:
         self.llm_factory = factory
         self.chat_model = factory.create_chat_model()
         self.embeddings = factory.create_embeddings()
-        self._log_startup_configuration()
+        self.log_startup_configuration()
 
         self.memory_repo = MemoryRepository(
             db_path=self.settings.memory_path,
@@ -53,7 +55,13 @@ class LegalAgentService:
         )
         self.graph = None
 
-    def _log_startup_configuration(self) -> None:
+    def log_startup_configuration(self) -> None:
+        """Log the configured LLM and embedding backend settings.
+
+        Returns:
+            None: This method completes after writing startup configuration logs.
+        """
+
         self.logger.info(
             "LLM backend configuration",
             extra={
@@ -66,7 +74,13 @@ class LegalAgentService:
             },
         )
 
-    async def _ensure_healthcheck(self) -> None:
+    async def ensure_healthcheck(self) -> None:
+        """Run the LLM backend health check once before serving requests.
+
+        Returns:
+            None: This method completes after the backend health check succeeds.
+        """
+
         if self._health_checked:
             return
         async with self._health_lock:
@@ -83,7 +97,13 @@ class LegalAgentService:
                 },
             )
 
-    async def _ensure_graph(self) -> None:
+    async def ensure_graph(self) -> None:
+        """Initialize the main LangGraph agent graph and checkpoint store if needed.
+
+        Returns:
+            None: This method completes after the graph and checkpointer are ready.
+        """
+
         if self.graph is not None:
             return
         async with self._graph_lock:
@@ -102,8 +122,19 @@ class LegalAgentService:
             )
 
     async def aask(self, *, question: str, user_id: str, thread_id: str) -> AnswerResult:
-        await self._ensure_healthcheck()
-        await self._ensure_graph()
+        """Process a legal question through the agent graph and return a structured answer result.
+
+        Args:
+            question: User question to answer.
+            user_id: User identifier used for memory retrieval and persistence.
+            thread_id: Conversation thread ID used for checkpointing.
+
+        Returns:
+            AnswerResult: Final answer, route, memories, retrieved evidence, recovery metadata, and citation validation.
+        """
+
+        await self.ensure_healthcheck()
+        await self.ensure_graph()
         trace_id = new_trace_id()
         config = {"configurable": {"thread_id": thread_id}}
         state = await self.graph.ainvoke(
@@ -126,9 +157,20 @@ class LegalAgentService:
             rewritten_query=state.get("rewritten_query", ""),
             retrieval_iterations=state.get("retrieval_iterations", 0),
             fallback_history=state.get("fallback_history", []),
+            recovery_steps=state.get("recovery_steps", []),
+            evidence_list=state.get("evidence_list", []),
+            citation_validation=state.get("citation_validation", {}),
+            retrieval_sufficient=bool(state.get("retrieval_sufficient", False)),
+            sufficiency_reason=state.get("sufficiency_reason", ""),
         )
 
     async def aclose(self) -> None:
+        """Close the checkpoint context and reset graph resources.
+
+        Returns:
+            None: This method completes after checkpoint resources are released.
+        """
+
         if self.checkpointer_cm is None:
             return
         try:

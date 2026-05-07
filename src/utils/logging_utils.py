@@ -43,6 +43,8 @@ class JsonFormatter(logging.Formatter):
             "selected_collection",
             "source_type",
             "topic",
+            "recovery_steps",
+            "citation_valid",
         ]:
             value = getattr(record, key, None)
             if value is not None:
@@ -77,6 +79,10 @@ def configure_logging(level: str = "INFO") -> None:
 
 def get_logger(name: str, **context: Any) -> ContextLoggerAdapter:
     return ContextLoggerAdapter(logging.getLogger(name), context)
+
+
+def log_event(logger: ContextLoggerAdapter, event_name: str, **payload: Any) -> None:
+    logger.info(event_name, extra={"event": event_name, **payload})
 
 
 def new_trace_id() -> str:

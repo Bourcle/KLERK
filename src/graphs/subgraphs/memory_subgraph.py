@@ -4,7 +4,26 @@ from graphs.state import MemoryState
 
 
 def build_memory_subgraph(memory_repo, settings):
+    """Build and compile the memory-loading subgraph.
+
+    Args:
+        memory_repo: Repository used to search user memories by question and domain.
+        settings: Runtime settings containing memory retrieval options.
+
+    Returns:
+        CompiledStateGraph: A compiled LangGraph runnable for loading relevant memories.
+    """
+
     async def load_memories(state: MemoryState):
+        """Load relevant user memories for the current question and route.
+
+        Args:
+            state: Current memory graph state containing user ID, question, and route metadata.
+
+        Returns:
+            dict: State updates containing serialized memory items.
+        """
+
         route = state.get("route") or {}
         memories = memory_repo.search(
             user_id=state["user_id"],

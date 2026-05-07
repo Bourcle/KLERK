@@ -22,6 +22,10 @@ class AgentState(TypedDict, total=False):
     rewritten_query: str
     retrieval_iterations: int
     fallback_history: list[str]
+    sufficiency_reason: str
+    recovery_steps: list[dict[str, Any]]
+    evidence_list: list[dict[str, Any]]
+    citation_validation: dict[str, Any]
 
 
 class MemoryState(TypedDict, total=False):
@@ -42,3 +46,8 @@ class LegalRAGState(TypedDict, total=False):
     rewritten_query: str
     iteration: int
     fallback_history: list[str]
+    sufficiency_reason: str
+    suggested_action: str
+    recovery_steps: list[dict[str, Any]]
+    evidence_list: list[dict[str, Any]]
+    citation_validation: dict[str, Any]

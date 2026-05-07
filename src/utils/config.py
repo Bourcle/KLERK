@@ -1,32 +1,29 @@
 import os
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(PROJECT_ROOT / ".env"),
+        env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_env: str = Field(default="dev", alias="APP_ENV")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
-    local_llm_provider: str = Field(default="ollama", alias="LOCAL_LLM_PROVIDER")
-    local_llm_model: str = Field(default="qwen3:8b", alias="LOCAL_LLM_MODEL")
-    local_llm_base_url: str = Field(default="http://localhost:11434", alias="LOCAL_LLM_BASE_URL")
-    local_llm_api_key: str | None = Field(default=None, alias="LOCAL_LLM_API_KEY")
+    local_llm_provider: str = Field(default="vllm", alias="LOCAL_LLM_PROVIDER")
+    local_llm_model: str = Field(default="your-local-vllm-model", alias="LOCAL_LLM_MODEL")
+    local_llm_base_url: str = Field(default="http://localhost:8000/v1", alias="LOCAL_LLM_BASE_URL")
+    local_llm_api_key: str | None = Field(default="dummy", alias="LOCAL_LLM_API_KEY")
     local_llm_temperature: float = Field(default=0.1, alias="LOCAL_LLM_TEMPERATURE")
     local_llm_max_tokens: int = Field(default=2048, alias="LOCAL_LLM_MAX_TOKENS")
 
-    local_embedding_provider: str = Field(default="ollama", alias="LOCAL_EMBEDDING_PROVIDER")
+    local_embedding_provider: str = Field(default="local", alias="LOCAL_EMBEDDING_PROVIDER")
     local_embedding_model: str = Field(
         default="BAAI/bge-m3",
         validation_alias=AliasChoices("LOCAL_EMB_MODEL", "LOCAL_EMBEDDING_MODEL"),
